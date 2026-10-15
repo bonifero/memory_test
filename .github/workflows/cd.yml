@@ -1,0 +1,82 @@
+name: CD
+
+# Deploys main to the server after CI has passed.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  APP_DIR: memory-test
+  # Training project: app settings are static here, only server credentials are secrets.
+  DB_PATH: /data/results.db
+  ADMIN_USER: admin
+  ADMIN_PASSWORD: admin
+  BACKEND_HOST_PORT: "9095"
+  FRONTEND_HOST_PORT: "9096"
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<CFG
+          Host deploy-target
+            HostName $SERVER_HOST
+            User ${{ secrets.SERVER_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+          CFG
+
+      - name: Write .env
+        run: |
+          cat > .env <<ENV
+          DB_PATH=$DB_PATH
+          ADMIN_USER=$ADMIN_USER
+          ADMIN_PASSWORD=$ADMIN_PASSWORD
+          BACKEND_HOST_PORT=$BACKEND_HOST_PORT
+          FRONTEND_HOST_PORT=$FRONTEND_HOST_PORT
+          ENV
+
+      - name: Upload sources
+        run: |
+          ssh deploy-target "mkdir -p ~/$APP_DIR && rm -rf ~/$APP_DIR/backend ~/$APP_DIR/frontend"
+          tar czf - --exclude=.git --exclude=node_modules --exclude=dist \
+            backend frontend docker-compose.yml .env \
+            | ssh deploy-target "tar xzf - -C ~/$APP_DIR"
+
+      - name: Start containers
+        run: |
+          ssh deploy-target "cd ~/$APP_DIR && docker compose up -d --build --remove-orphans && docker image prune -f"
+
+      - name: Health check
+        run: |
+          ssh deploy-target "
+            for i in \$(seq 1 30); do
+              if curl -fsS http://127.0.0.1:$BACKEND_HOST_PORT/api/health && curl -fsS http://127.0.0.1:$FRONTEND_HOST_PORT/healthz; then
+                echo; echo 'Deployed successfully'; exit 0
+              fi
+              sleep 2
+            done
+            cd ~/$APP_DIR && docker compose ps && docker compose logs --tail=50
+            exit 1
+          "

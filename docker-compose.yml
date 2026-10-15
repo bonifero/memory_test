@@ -1,0 +1,32 @@
+name: memory-test
+
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: 3000
+    volumes:
+      - db-data:/data
+    ports:
+      # Host port 9095 → container 3000; only reachable from the host (system nginx).
+      - "127.0.0.1:${BACKEND_HOST_PORT:-9095}:3000"
+    networks: [app]
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      # Host port 9096 → container 80; the system nginx proxies the domain here.
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-9096}:80"
+    networks: [app]
+
+volumes:
+  db-data:
+
+networks:
+  app:
