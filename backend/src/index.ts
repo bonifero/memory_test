@@ -5,33 +5,37 @@ import { config } from "./config.js";
 import { statsCsv, trialsCsv } from "./csv.js";
 import { countSessions, db, deleteSessions, getSession, listSessions, saveSession, selectSessions,
   selectTrials, type TrialFilter } from "./db.js";
-import { conditions, setSizes, totalTrials } from "./protocol.js";
+import { PROTOCOL_VERSION, conditionNotations, conditions, notationOf, setSizes, totalTrials } from "./protocol.js";
 import { computeStats } from "./stats.js";
 
-const digit = z.number().int().min(0).max(9);
+// Roman numerals are 0–9, pictograms 10–19.
+const code = z.number().int().min(0).max(19);
 const trialSchema = z.object({
   trial: z.number().int().min(1).max(totalTrials),
   caseId: z.string().max(40),
   condition: z.enum(["A", "B", "C", "D"]),
-  notation: z.enum(["roman", "pictograms"]),
-  symbolSize: z.enum(["small", "large"]),
   block: z.number().int().min(1).max(4),
   blockTrial: z.number().int().min(1).max(3),
   size: z.number().int().refine((v) => (setSizes as readonly number[]).includes(v)),
   durationMs: z.number().int().min(0).max(60_000),
   actualDurationMs: z.number().int().min(0).max(600_000),
   responseMs: z.number().int().min(0).max(86_400_000),
-  shown: z.array(digit).min(1).max(10),
-  answer: z.array(digit).max(10),
+  shown: z.array(code).min(1).max(10),
+  shownSizes: z.array(z.enum(["small", "large"])).min(1).max(10),
+  answer: z.array(code).max(20),
   timestamp: z.string().max(40)
-}).refine((t) => conditions[t.condition].notation === t.notation && conditions[t.condition].symbolSize === t.symbolSize,
-  "condition does not match notation/symbolSize");
+}).refine((t) => t.shownSizes.length === t.shown.length && new Set(t.shown.map((c) => c % 10)).size === t.shown.length,
+  "shownSizes must match shown, digits must be distinct"
+).refine((t) => t.shown.every((c, i) => conditions[t.condition].kinds.some((k) =>
+  k.notation === notationOf(c) && k.symbolSize === t.shownSizes[i])), "shown symbols do not match the condition"
+).refine((t) => t.answer.every((c) => conditionNotations(t.condition).includes(notationOf(c))),
+  "answer contains a notation that was not offered");
 
 const sessionSchema = z.object({
   id: z.string().min(1).max(100),
   participant: z.string().trim().min(1).max(100),
   orderIndex: z.number().int().min(0).max(3),
-  protocol: z.string().max(40),
+  protocol: z.literal(PROTOCOL_VERSION),
   status: z.enum(["completed", "stopped"]),
   totalPlanned: z.number().int().min(1).max(100),
   startedAt: z.string().max(40),

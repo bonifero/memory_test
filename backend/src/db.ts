@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { config } from "./config.js";
-import { score, type ConditionId, type Notation, type SymbolSize } from "./protocol.js";
+import { PROTOCOL_VERSION, conditionNotations, score, type ConditionId, type SymbolSize } from "./protocol.js";
 
 fs.mkdirSync(path.dirname(path.resolve(config.dbPath)), { recursive: true });
 
@@ -48,13 +48,15 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS trials_session_idx ON trials(session_id);
 `);
+// Mixed sets: size of every shown symbol, aligned with `shown`. NULL for sessions of older protocols.
+if (!(db.prepare("PRAGMA table_info(trials)").all() as { name: string }[]).some((c) => c.name === "shown_sizes")) {
+  db.exec("ALTER TABLE trials ADD COLUMN shown_sizes TEXT");
+}
 
 export interface TrialInput {
   trial: number;
   caseId: string;
   condition: ConditionId;
-  notation: Notation;
-  symbolSize: SymbolSize;
   block: number;
   blockTrial: number;
   size: number;
@@ -62,6 +64,7 @@ export interface TrialInput {
   actualDurationMs: number;
   responseMs: number;
   shown: number[];
+  shownSizes: SymbolSize[];
   answer: number[];
   timestamp: string;
 }
@@ -96,8 +99,10 @@ export interface TrialRow {
   trial: number;
   case_id: string;
   condition: ConditionId;
-  notation: Notation;
-  symbol_size: SymbolSize;
+  /** "roman", "pictograms" or "mixed" when the set has both. */
+  notation: string;
+  /** Always "mixed" in the current protocol; per-symbol sizes are in `shown_sizes`. */
+  symbol_size: string;
   block: number;
   block_trial: number;
   set_size: number;
@@ -105,6 +110,7 @@ export interface TrialRow {
   actual_duration_ms: number;
   response_ms: number;
   shown: string;
+  shown_sizes: string | null;
   answer: string;
   missed: string;
   extra: string;
@@ -125,10 +131,10 @@ const upsertSession = db.prepare(`
 const deleteTrials = db.prepare("DELETE FROM trials WHERE session_id = ?");
 const insertTrial = db.prepare(`
   INSERT INTO trials (session_id, trial, case_id, condition, notation, symbol_size, block, block_trial, set_size,
-    duration_ms, actual_duration_ms, response_ms, shown, answer, missed, extra, missed_count, extra_count,
+    duration_ms, actual_duration_ms, response_ms, shown, shown_sizes, answer, missed, extra, missed_count, extra_count,
     accuracy, exact, timestamp)
   VALUES (@sessionId, @trial, @caseId, @condition, @notation, @symbolSize, @block, @blockTrial, @size,
-    @durationMs, @actualDurationMs, @responseMs, @shown, @answer, @missed, @extra, @missedCount, @extraCount,
+    @durationMs, @actualDurationMs, @responseMs, @shown, @shownSizes, @answer, @missed, @extra, @missedCount, @extraCount,
     @accuracy, @exact, @timestamp)
 `);
 
@@ -139,10 +145,14 @@ export const saveSession = db.transaction((session: SessionInput) => {
   for (const trial of session.results) {
     // Score on the server so stored numbers never depend on the client.
     const result = score(trial.shown, trial.answer);
+    const notations = conditionNotations(trial.condition);
     insertTrial.run({
       ...trial,
       sessionId: session.id,
+      notation: notations.length > 1 ? "mixed" : notations[0],
+      symbolSize: "mixed",
       shown: JSON.stringify(trial.shown),
+      shownSizes: JSON.stringify(trial.shownSizes),
       answer: JSON.stringify(trial.answer),
       missed: JSON.stringify(result.missed),
       extra: JSON.stringify(result.extra),
@@ -192,8 +202,9 @@ export interface TrialFilter {
 }
 
 export function selectTrials(filter: TrialFilter): TrialWithSession[] {
-  const where: string[] = [];
-  const params: Record<string, unknown> = {};
+  // Statistics only make sense for one protocol: older sessions used different conditions.
+  const where: string[] = ["s.protocol = @protocol"];
+  const params: Record<string, unknown> = { protocol: PROTOCOL_VERSION };
   if (filter.completedOnly) where.push("s.status = 'completed'");
   if (filter.from) { where.push("s.started_at >= @from"); params.from = filter.from; }
   if (filter.to) { where.push("s.started_at < @to"); params.to = filter.to; }
@@ -204,17 +215,17 @@ export function selectTrials(filter: TrialFilter): TrialWithSession[] {
   return db.prepare(`
     SELECT t.*, s.participant, s.status, s.started_at, s.order_index
     FROM trials t JOIN sessions s ON s.id = t.session_id
-    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+    WHERE ${where.join(" AND ")}
     ORDER BY s.started_at, t.trial
   `).all(params) as TrialWithSession[];
 }
 
 export function selectSessions(filter: TrialFilter): SessionRow[] {
-  const where: string[] = [];
-  const params: Record<string, unknown> = {};
+  const where: string[] = ["protocol = @protocol"];
+  const params: Record<string, unknown> = { protocol: PROTOCOL_VERSION };
   if (filter.completedOnly) where.push("status = 'completed'");
   if (filter.from) { where.push("started_at >= @from"); params.from = filter.from; }
   if (filter.to) { where.push("started_at < @to"); params.to = filter.to; }
-  return db.prepare(`SELECT * FROM sessions ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`)
+  return db.prepare(`SELECT * FROM sessions WHERE ${where.join(" AND ")}`)
     .all(params) as SessionRow[];
 }

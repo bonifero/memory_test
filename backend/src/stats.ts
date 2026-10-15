@@ -1,4 +1,5 @@
-import { conditionIds, conditions, setSizes, type ConditionId } from "./protocol.js";
+import { cellIds, cellOf, cells, conditionIds, conditions, notationOf, setSizes, type CellId, type ConditionId,
+  type SymbolSize } from "./protocol.js";
 import type { SessionRow, TrialWithSession } from "./db.js";
 
 // ---------- Basic descriptive statistics ----------
@@ -154,14 +155,33 @@ export function verdict(test: PairedTest): Verdict {
 
 // ---------- Experiment-specific aggregation ----------
 
-type GroupKey = ConditionId | "roman" | "pictograms" | "small" | "large";
-const groupKeys: GroupKey[] = [...conditionIds, "roman", "pictograms", "small", "large"];
+/**
+ * Every set mixes two kinds of symbols, so notation and size are compared on single symbols:
+ * recall of a kind = share of shown symbols of that kind that the participant marked.
+ * Extra answers cannot be attributed to a size and only count in the trial accuracy.
+ */
+interface Item { cell: CellId; size: number; recalled: boolean }
 
-function inGroup(trial: TrialWithSession, key: GroupKey): boolean {
-  if (key === "roman" || key === "pictograms") return trial.notation === key;
-  if (key === "small" || key === "large") return trial.symbol_size === key;
-  return trial.condition === key;
+function itemsOf(trial: TrialWithSession): Item[] {
+  const shown = JSON.parse(trial.shown) as number[];
+  const sizes = JSON.parse(trial.shown_sizes ?? "[]") as SymbolSize[];
+  const answer = new Set(JSON.parse(trial.answer) as number[]);
+  return shown.flatMap((code, i) => sizes[i]
+    ? [{ cell: cellOf(notationOf(code), sizes[i]), size: trial.set_size, recalled: answer.has(code) }] : []);
 }
+
+const recallOf = (items: Item[]) => (items.length ? (items.filter((i) => i.recalled).length / items.length) * 100 : null);
+
+type FactorKey = "roman" | "pictograms" | "small" | "large";
+const factorCells: Record<FactorKey, [CellId, CellId]> = {
+  roman: ["RS", "RL"], pictograms: ["PS", "PL"], small: ["RS", "PS"], large: ["RL", "PL"]
+};
+const factorKeys = Object.keys(factorCells) as FactorKey[];
+/** Factor level = mean of its two cells, so both levels of the other factor weigh equally. */
+const factorOf = (byCell: Record<CellId, number | null>, key: FactorKey) => {
+  const [a, b] = factorCells[key].map((c) => byCell[c]);
+  return a === null || b === null ? null : (a + b) / 2;
+};
 
 export interface ParticipantStats {
   sessionId: string;
@@ -171,6 +191,7 @@ export interface ParticipantStats {
   trials: number;
   meanAccuracy: number | null;
   byCondition: Record<ConditionId, number | null>;
+  byCell: Record<CellId, number | null>;
   roman: number | null;
   pictograms: number | null;
   small: number | null;
@@ -187,13 +208,13 @@ function participantStats(trials: TrialWithSession[]): ParticipantStats[] {
     bySession.get(trial.session_id)!.push(trial);
   }
   return [...bySession.values()].map((list) => {
-    const acc = (key: GroupKey) => mean(list.filter((t) => inGroup(t, key)).map((t) => t.accuracy));
-    const byCondition = Object.fromEntries(conditionIds.map((id) => [id, acc(id)])) as Record<ConditionId, number | null>;
-    const roman = acc("roman");
-    const pictograms = acc("pictograms");
-    const small = acc("small");
-    const large = acc("large");
-    const { A, B, C, D } = byCondition;
+    const items = list.flatMap(itemsOf);
+    const byCondition = Object.fromEntries(conditionIds.map((id) =>
+      [id, mean(list.filter((t) => t.condition === id).map((t) => t.accuracy))])) as Record<ConditionId, number | null>;
+    const byCell = Object.fromEntries(cellIds.map((id) =>
+      [id, recallOf(items.filter((i) => i.cell === id))])) as Record<CellId, number | null>;
+    const [roman, pictograms, small, large] = factorKeys.map((key) => factorOf(byCell, key));
+    const { RS, RL, PS, PL } = byCell;
     return {
       sessionId: list[0].session_id,
       participant: list[0].participant,
@@ -202,11 +223,12 @@ function participantStats(trials: TrialWithSession[]): ParticipantStats[] {
       trials: list.length,
       meanAccuracy: mean(list.map((t) => t.accuracy)),
       byCondition,
+      byCell,
       roman, pictograms, small, large,
       notationDiff: roman !== null && pictograms !== null ? pictograms - roman : null,
       sizeDiff: small !== null && large !== null ? large - small : null,
       // Size effect for pictograms minus size effect for roman numerals.
-      interactionDiff: A !== null && B !== null && C !== null && D !== null ? (D - C) - (B - A) : null
+      interactionDiff: RS !== null && RL !== null && PS !== null && PL !== null ? (PL - PS) - (RL - RS) : null
     };
   });
 }
@@ -224,10 +246,15 @@ function hypothesis(id: string, title: string, levelA: string, levelB: string,
   };
 }
 
+const present = (values: (number | null)[]) => values.filter((v): v is number => v !== null);
+
 export function computeStats(trials: TrialWithSession[], sessions: SessionRow[]) {
   const accuracies = trials.map((t) => t.accuracy);
-  const groups = Object.fromEntries(groupKeys.map((key) => {
-    const list = trials.filter((t) => inGroup(t, key));
+  const items = trials.flatMap(itemsOf);
+  const participants = participantStats(trials);
+
+  const groups = Object.fromEntries(conditionIds.map((key) => {
+    const list = trials.filter((t) => t.condition === key);
     return [key, {
       ...describe(list.map((t) => t.accuracy)),
       exactShare: list.length ? (list.filter((t) => t.exact).length / list.length) * 100 : null,
@@ -235,8 +262,20 @@ export function computeStats(trials: TrialWithSession[], sessions: SessionRow[])
       meanExtra: mean(list.map((t) => t.extra_count)),
       meanResponseMs: mean(list.map((t) => t.response_ms))
     }];
-  })) as Record<GroupKey, Description & { exactShare: number | null; meanMissed: number | null;
+  })) as Record<ConditionId, Description & { exactShare: number | null; meanMissed: number | null;
     meanExtra: number | null; meanResponseMs: number | null }>;
+
+  // Recall of symbol kinds: described over participants (n = participants), plus the pooled share over all symbols.
+  const recall = Object.fromEntries([
+    ...cellIds.map((id) => {
+      const list = items.filter((i) => i.cell === id);
+      return [id, { ...describe(present(participants.map((p) => p.byCell[id]))), items: list.length, pooled: recallOf(list) }];
+    }),
+    ...factorKeys.map((key) => {
+      const list = items.filter((i) => factorCells[key].includes(i.cell));
+      return [key, { ...describe(present(participants.map((p) => p[key]))), items: list.length, pooled: recallOf(list) }];
+    })
+  ]) as Record<CellId | FactorKey, Description & { items: number; pooled: number | null }>;
 
   const bySetSize = Object.fromEntries(conditionIds.map((id) => [id,
     Object.fromEntries(setSizes.map((size) => {
@@ -244,17 +283,19 @@ export function computeStats(trials: TrialWithSession[], sessions: SessionRow[])
       return [size, { n: list.length, mean: mean(list.map((t) => t.accuracy)) }];
     }))]));
 
-  const participants = participantStats(trials);
+  const recallBySetSize = Object.fromEntries(cellIds.map((id) => [id,
+    Object.fromEntries(setSizes.map((size) => {
+      const list = items.filter((i) => i.cell === id && i.size === size);
+      return [size, { n: list.length, mean: recallOf(list) }];
+    }))]));
+
   const h1 = hypothesis("H1", "Пиктограммы запоминаются лучше римских цифр", "Пиктограммы", "Римские цифры",
     participants, (p) => [p.pictograms, p.roman]);
   const h2 = hypothesis("H2", "Крупные символы запоминаются лучше мелких", "Крупные", "Мелкие",
     participants, (p) => [p.large, p.small]);
   const interactionTest = pairedTest(participants.flatMap((p) => p.interactionDiff === null ? [] : [p.interactionDiff]));
-  const sizeEffect = (key: "roman" | "pictograms") => {
-    const [small, large] = (key === "roman" ? ["A", "B"] : ["C", "D"]) as ConditionId[];
-    return pairedTest(participants.flatMap((p) =>
-      p.byCondition[small] === null || p.byCondition[large] === null ? [] : [p.byCondition[large]! - p.byCondition[small]!]));
-  };
+  const sizeEffect = (small: CellId, large: CellId) => pairedTest(participants.flatMap((p) =>
+    p.byCell[small] === null || p.byCell[large] === null ? [] : [p.byCell[large]! - p.byCell[small]!]));
 
   return {
     generatedAt: new Date().toISOString(),
@@ -266,19 +307,24 @@ export function computeStats(trials: TrialWithSession[], sessions: SessionRow[])
       stopped: sessions.filter((s) => s.status === "stopped").length,
       withTrials: participants.length,
       trials: trials.length,
+      symbols: items.length,
       meanAccuracy: mean(accuracies),
+      meanRecall: recallOf(items),
       meanMissed: mean(trials.map((t) => t.missed_count)),
       meanExtra: mean(trials.map((t) => t.extra_count)),
       exactShare: trials.length ? (trials.filter((t) => t.exact).length / trials.length) * 100 : null
     },
     conditions: Object.fromEntries(conditionIds.map((id) => [id, conditions[id]])),
+    cells,
     groups,
+    recall,
     bySetSize,
+    recallBySetSize,
     hypotheses: [h1, h2],
     interaction: {
       test: interactionTest,
-      sizeEffectRoman: sizeEffect("roman"),
-      sizeEffectPictograms: sizeEffect("pictograms")
+      sizeEffectRoman: sizeEffect("RS", "RL"),
+      sizeEffectPictograms: sizeEffect("PS", "PL")
     },
     participants
   };

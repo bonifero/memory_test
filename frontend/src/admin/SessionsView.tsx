@@ -1,18 +1,29 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Glyph } from "../Glyph";
-import { GLYPH_CELL, TOTAL_TRIALS, conditionById, conditionLabel, type Notation } from "../protocol";
+import { GLYPH_CELL, PROTOCOL_VERSION, TOTAL_TRIALS, conditionLabel, conditions, digitOf, notationOf, type Notation,
+  type SymbolSize } from "../protocol";
 import { adminFetch, adminUrl, UnauthorizedError, type SessionDetail, type SessionSummary } from "./api";
 import { fmtDate, fmtPct, fmtSeconds } from "./format";
 
-function Symbols({ json, notation }: { json: string; notation: Notation }) {
-  const digits = JSON.parse(json) as number[];
-  if (!digits.length) return <span className="muted">пусто</span>;
+/** Large symbols are framed. Sessions of older protocols stored digits 0–9 with one notation for the whole set. */
+function Symbols({ json, sizesJson, legacyNotation }: { json: string; sizesJson?: string | null; legacyNotation?: Notation }) {
+  const codes = JSON.parse(json) as number[];
+  const sizes = sizesJson ? JSON.parse(sizesJson) as SymbolSize[] : [];
+  if (!codes.length) return <span className="muted">пусто</span>;
+  const items = codes.map((code, i) => ({ code, large: sizes[i] === "large" })).sort((a, b) => a.code - b.code);
   return (
     <span className="mini-symbols">
-      {[...digits].sort((a, b) => a - b).map((d) => <Glyph key={d} digit={d} notation={notation} cell={GLYPH_CELL.admin} />)}
+      {items.map(({ code, large }) => (
+        <span key={code} className={large ? "is-large" : ""} title={large ? "крупный" : undefined}>
+          <Glyph digit={digitOf(code)} notation={legacyNotation ?? notationOf(code)} cell={GLYPH_CELL.admin} />
+        </span>
+      ))}
     </span>
   );
 }
+
+const legacyOf = (t: { shown_sizes: string | null; notation: string }) =>
+  t.shown_sizes === null ? (t.notation as Notation) : undefined;
 
 function SessionDetails({ id, onUnauthorized }: { id: string; onUnauthorized: () => void }) {
   const [detail, setDetail] = useState<SessionDetail | null>(null);
@@ -37,10 +48,10 @@ function SessionDetails({ id, onUnauthorized }: { id: string; onUnauthorized: ()
           <tr key={t.id}>
             <td>{t.trial}</td>
             <td>{t.block}.{t.block_trial}</td>
-            <td><span className="cond-pill">{t.condition}</span> {conditionLabel(conditionById[t.condition])}</td>
+            <td><span className="cond-pill">{t.condition}</span> {t.shown_sizes === null ? "старый протокол" : conditionLabel({ id: t.condition })}</td>
             <td>{t.set_size} · {t.duration_ms / 1000} с</td>
-            <td><Symbols json={t.shown} notation={t.notation} /></td>
-            <td><Symbols json={t.answer} notation={t.notation} /></td>
+            <td><Symbols json={t.shown} sizesJson={t.shown_sizes} legacyNotation={legacyOf(t)} /></td>
+            <td><Symbols json={t.answer} legacyNotation={legacyOf(t)} /></td>
             <td>{t.missed_count}</td>
             <td>{t.extra_count}</td>
             <td><strong className={t.exact ? "text-success" : ""}>{fmtPct(t.accuracy)}</strong></td>
@@ -135,8 +146,7 @@ export function SessionsView({ onUnauthorized }: { onUnauthorized: () => void })
                     onChange={() => setSelected(allSelected ? new Set() : new Set(sessions.map((s) => s.id)))} />
                 </th>
                 <th>Участник</th><th>Начало</th><th>Статус</th><th>Пройдено</th><th>Точность</th>
-                <th title="Римские · мелкие">A</th><th title="Римские · крупные">B</th>
-                <th title="Пиктограммы · мелкие">C</th><th title="Пиктограммы · крупные">D</th><th />
+                {conditions.map((c) => <th key={c.id} title={c.label}>{c.id}</th>)}<th />
               </tr>
             </thead>
             <tbody>
@@ -155,7 +165,8 @@ export function SessionsView({ onUnauthorized }: { onUnauthorized: () => void })
                       </button>
                     </td>
                     <td>{fmtDate(s.started_at)}</td>
-                    <td><span className={`status-pill ${s.status}`}>{s.status === "completed" ? "Завершена" : "Досрочно"}</span></td>
+                    <td><span className={`status-pill ${s.status}`}>{s.status === "completed" ? "Завершена" : "Досрочно"}</span>
+                      {s.protocol !== PROTOCOL_VERSION && <span className="tag" title="Не входит в статистику">старый протокол</span>}</td>
                     <td>{s.trials_count} / {s.total_planned ?? TOTAL_TRIALS}</td>
                     <td><strong>{fmtPct(s.mean_accuracy)}</strong></td>
                     <td>{fmtPct(s.acc_a, 0)}</td><td>{fmtPct(s.acc_b, 0)}</td><td>{fmtPct(s.acc_c, 0)}</td><td>{fmtPct(s.acc_d, 0)}</td>

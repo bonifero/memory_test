@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Glyph } from "../Glyph";
 import {
-  BLOCK_LENGTH, DIGITS, GLYPH_CELL, ORDERS, PROTOCOL_VERSION, TOTAL_TRIALS, conditionLabel, conditions, describeSymbol,
-  makePlan, romanValues, score, trainingPlan, type Notation, type Trial
+  BLOCK_LENGTH, DIGITS, GLYPH_CELL, ORDERS, PROTOCOL_VERSION, TOTAL_TRIALS, codeOf, conditionLabel, conditionNotations,
+  conditions, describeSymbol, digitOf, makePlan, notationLabels, notationOf, romanValues, score, trainingPlan,
+  type Code, type Trial
 } from "../protocol";
 
 interface TrialResult extends Trial {
@@ -65,12 +66,13 @@ async function postSession(session: Session): Promise<boolean> {
   }
 }
 
-function SymbolSet({ digits, notation, cell, empty = "Ничего не выбрано" }:
-  { digits: number[]; notation: Notation; cell: number; empty?: string }) {
-  if (!digits.length) return <p className="muted set-empty">{empty}</p>;
+function SymbolSet({ codes, cell, empty = "Ничего не выбрано" }: { codes: Code[]; cell: number; empty?: string }) {
+  if (!codes.length) return <p className="muted set-empty">{empty}</p>;
   return (
     <div className="symbol-set">
-      {digits.map((digit) => <span className="symbol-chip" key={digit}><Glyph digit={digit} notation={notation} cell={cell} /></span>)}
+      {[...codes].sort((a, b) => a - b).map((code) => (
+        <span className="symbol-chip" key={code}><Glyph digit={digitOf(code)} notation={notationOf(code)} cell={cell} /></span>
+      ))}
     </div>
   );
 }
@@ -277,8 +279,8 @@ export function TestApp() {
     setPhase("participant");
   };
 
-  const toggle = (digit: number) =>
-    setSelected((prev) => (prev.includes(digit) ? prev.filter((d) => d !== digit) : [...prev, digit]));
+  const toggle = (code: Code) =>
+    setSelected((prev) => (prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]));
 
   const progress = training !== null
     ? `Тренировка ${Math.min(training + 1, trainingPlan.length)} / ${trainingPlan.length}`
@@ -352,8 +354,10 @@ export function TestApp() {
             <h3>Как проходить тест</h3>
             <ol className="steps">
               <li>Перед каждым набором появится отсчёт 3–2–1.</li>
-              <li>Запомните символы: 3 символа показываются 3 секунды, 5 — 5 секунд, 8 — 8 секунд.</li>
-              <li>Отметьте все символы, которые увидели. Порядок не важен. Если ничего не запомнили, отправьте пустой ответ.</li>
+              <li>Запомните символы: 3 символа показываются 3 секунды, 5 — 5 секунд, 8 — 8 секунд.
+                В каждом наборе символы разного размера, а в двух блоках ещё и римские цифры вместе с пиктограммами.</li>
+              <li>Отметьте все символы, которые увидели. Порядок не важен. Если в наборе были и римские цифры, и пиктограммы,
+                отмечайте символ в том виде, в каком он был показан. Если ничего не запомнили, отправьте пустой ответ.</li>
               <li>Посмотрите число пропусков и лишних ответов и переходите дальше.</li>
             </ol>
             <h3>Порядок блоков</h3>
@@ -368,7 +372,7 @@ export function TestApp() {
           <aside className="panel">
             <h3>Обозначения</h3>
             <p className="muted small">Число фигур в пиктограмме равно цифре. Ноль — пустое кольцо, в римской записи — N.
-              Во всех блоках символы одного цвета, отличаются только форма и размер.</p>
+              Все символы одного цвета, отличаются только форма и размер.</p>
             <SymbolTable />
           </aside>
         </div>
@@ -385,10 +389,10 @@ export function TestApp() {
       {phase === "stimulus" && current && (
         <section className="panel stage">
           <p className="eyebrow">Запомните набор</p>
-          <div className={`stimulus-grid size-${current.symbolSize}`}>
-            {current.shown.map((digit) => (
-              <div className="stimulus-card" key={digit}>
-                <Glyph digit={digit} notation={current.notation} cell={GLYPH_CELL[current.symbolSize]} />
+          <div className="stimulus-grid">
+            {current.shown.map((code, i) => (
+              <div className="stimulus-card" key={code}>
+                <Glyph digit={digitOf(code)} notation={notationOf(code)} cell={GLYPH_CELL[current.shownSizes[i]]} />
               </div>
             ))}
           </div>
@@ -401,18 +405,24 @@ export function TestApp() {
           <p className="eyebrow">{current.training ? "Тренировка · " : ""}{conditionLabel(current)}</p>
           <h2>Какие символы были в наборе?</h2>
           <p className="muted">Порядок выбора не учитывается. Можно отправить пустой ответ.</p>
-          <div className="answer-grid">
-            {DIGITS.map((digit) => {
-              const isSelected = selected.includes(digit);
-              return (
-                <button type="button" key={digit} className={`answer-option${isSelected ? " selected" : ""}`}
-                  aria-pressed={isSelected} aria-label={describeSymbol(current.notation, digit)} onClick={() => toggle(digit)}>
-                  <Glyph digit={digit} notation={current.notation} cell={GLYPH_CELL.answer} />
-                  <span className="check" aria-hidden="true">✓</span>
-                </button>
-              );
-            })}
-          </div>
+          {conditionNotations(current.id).map((notation, _i, notations) => (
+            <div className="answer-group" key={notation}>
+              {notations.length > 1 && <h3>{notationLabels[notation]}</h3>}
+              <div className="answer-grid">
+                {DIGITS.map((digit) => {
+                  const code = codeOf(notation, digit);
+                  const isSelected = selected.includes(code);
+                  return (
+                    <button type="button" key={code} className={`answer-option${isSelected ? " selected" : ""}`}
+                      aria-pressed={isSelected} aria-label={describeSymbol(notation, digit)} onClick={() => toggle(code)}>
+                      <Glyph digit={digit} notation={notation} cell={GLYPH_CELL.answer} />
+                      <span className="check" aria-hidden="true">✓</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
           <div className="actions center">
             <span className="counter">Выбрано {selected.length}</span>
             <button type="button" className="button primary" onClick={submitAnswer}>Сохранить ответ</button>
@@ -433,9 +443,9 @@ export function TestApp() {
           </div>
           <div className="compare">
             <div><h3>Показанный набор</h3>
-              <SymbolSet digits={[...lastResult.shown].sort((a, b) => a - b)} notation={lastResult.notation} cell={GLYPH_CELL.table} /></div>
+              <SymbolSet codes={lastResult.shown} cell={GLYPH_CELL.table} /></div>
             <div><h3>Ответ участника</h3>
-              <SymbolSet digits={lastResult.answer} notation={lastResult.notation} cell={GLYPH_CELL.table} /></div>
+              <SymbolSet codes={lastResult.answer} cell={GLYPH_CELL.table} /></div>
           </div>
           <div className="actions center">
             <button type="button" className="button primary" onClick={nextTrial}>

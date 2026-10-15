@@ -165,6 +165,7 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 @keyframes drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 
 .answer-grid { display: grid; grid-template-columns: repeat(5, 172px); gap: 12px; margin: 18px 0 8px; }
+.answer-group h3 { margin: 18px 0 -6px; color: var(--muted); font-size: .8rem; letter-spacing: .06em; text-align: left; text-transform: uppercase; }
 .answer-option {
   position: relative; display: grid; place-items: center; height: 104px; padding: 8px; border: 2px solid var(--line); border-radius: 16px;
   background: #fff; transition: border-color .12s, background .12s, box-shadow .12s;
@@ -220,6 +221,8 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 .tag { margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: var(--amber-soft); color: #7c3d06; font-size: .72rem; font-weight: 700; }
 .mini-symbols { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 340px; white-space: normal; }
 .mini-symbols .glyph-roman { font-size: 1rem !important; height: auto !important; }
+.mini-symbols .is-large { display: inline-flex; outline: 1px solid var(--line-strong); outline-offset: 2px; border-radius: 3px; }
+.mini-symbols .is-large .glyph-roman { font-weight: 700; }
 .support { font-weight: 700; white-space: nowrap; }
 .support.yes { color: var(--accent); }
 .support.no { color: var(--danger); }

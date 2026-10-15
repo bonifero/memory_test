@@ -1,4 +1,4 @@
-import type { ConditionId, Notation, SymbolSize } from "../protocol";
+import type { ConditionId } from "../protocol";
 
 export class UnauthorizedError extends Error {}
 
@@ -31,6 +31,7 @@ export interface SessionSummary {
   id: string;
   participant: string;
   order_index: number;
+  protocol: string;
   status: "completed" | "stopped";
   total_planned: number;
   started_at: string;
@@ -47,8 +48,9 @@ export interface TrialRow {
   id: number;
   trial: number;
   condition: ConditionId;
-  notation: Notation;
-  symbol_size: SymbolSize;
+  /** Older protocols only: one notation and size for the whole set. */
+  notation: string;
+  symbol_size: string;
   block: number;
   block_trial: number;
   set_size: number;
@@ -56,6 +58,7 @@ export interface TrialRow {
   actual_duration_ms: number;
   response_ms: number;
   shown: string;
+  shown_sizes: string | null;
   answer: string;
   missed_count: number;
   extra_count: number;
@@ -109,6 +112,14 @@ export interface Hypothesis {
   verdict: Verdict;
 }
 
+export type CellId = "RS" | "RL" | "PS" | "PL";
+export type FactorKey = "roman" | "pictograms" | "small" | "large";
+
+export interface RecallStats extends Description {
+  items: number;
+  pooled: number | null;
+}
+
 export interface ParticipantStats {
   sessionId: string;
   participant: string;
@@ -117,12 +128,11 @@ export interface ParticipantStats {
   trials: number;
   meanAccuracy: number | null;
   byCondition: Record<ConditionId, number | null>;
+  byCell: Record<CellId, number | null>;
   notationDiff: number | null;
   sizeDiff: number | null;
   interactionDiff: number | null;
 }
-
-export type GroupKey = ConditionId | "roman" | "pictograms" | "small" | "large";
 
 export interface Stats {
   generatedAt: string;
@@ -134,13 +144,17 @@ export interface Stats {
     stopped: number;
     withTrials: number;
     trials: number;
+    symbols: number;
     meanAccuracy: number | null;
+    meanRecall: number | null;
     meanMissed: number | null;
     meanExtra: number | null;
     exactShare: number | null;
   };
-  groups: Record<GroupKey, GroupStats>;
+  groups: Record<ConditionId, GroupStats>;
+  recall: Record<CellId | FactorKey, RecallStats>;
   bySetSize: Record<ConditionId, Record<string, { n: number; mean: number | null }>>;
+  recallBySetSize: Record<CellId, Record<string, { n: number; mean: number | null }>>;
   hypotheses: Hypothesis[];
   interaction: { test: PairedTest; sizeEffectRoman: PairedTest; sizeEffectPictograms: PairedTest };
   participants: ParticipantStats[];
