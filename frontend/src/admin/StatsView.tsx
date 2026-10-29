@@ -37,11 +37,6 @@ function testLine(test: PairedTest) {
   return `t(${test.df}) = ${fmtT(test.t)}, p = ${fmtP(test.p)}, dz = ${fmtNum(test.dz, 2)}`;
 }
 
-function VerdictBadge({ verdict }: { verdict: Verdict }) {
-  const view = verdictView[verdict];
-  return <span className={`verdict ${view.tone}`}><span aria-hidden="true">{view.icon}</span>{view.label}</span>;
-}
-
 function HypothesisCard({ h, minParticipants }: { h: Hypothesis; minParticipants: number }) {
   return (
     <article className="panel hypothesis">
