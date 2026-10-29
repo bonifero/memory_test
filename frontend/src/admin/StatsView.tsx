@@ -1,17 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ChartConfiguration, TooltipItem } from "chart.js";
-import { conditionById, conditions, SET_SIZES, type ConditionId } from "../protocol";
-import { adminFetch, adminUrl, filterQuery, type CellId, type FactorKey, type Filter, type Hypothesis, type PairedTest,
-  type Stats, type Verdict, UnauthorizedError } from "./api";
-import { ChartView, chartColors } from "./ChartView";
-import { fmtDate, fmtDiff, fmtNum, fmtP, fmtPct, fmtSeconds, fmtT } from "./format";
-
-const verdictView: Record<Verdict, { label: string; icon: string; tone: string }> = {
-  confirmed: { label: "Подтверждается", icon: "✓", tone: "good" },
-  not_confirmed: { label: "Не подтверждается", icon: "–", tone: "neutral" },
-  opposite: { label: "Значимый эффект в обратную сторону", icon: "✕", tone: "bad" },
-  insufficient: { label: "Недостаточно данных", icon: "…", tone: "warn" }
-};
+import {useCallback, useEffect, useMemo, useState} from "react";
+import type {ChartConfiguration, TooltipItem} from "chart.js";
+import {conditionById, type ConditionId, conditions, SET_SIZES} from "../protocol";
+import {
+    adminFetch,
+    adminUrl,
+    type CellId,
+    type FactorKey,
+    type Filter,
+    filterQuery,
+    type Hypothesis,
+    type PairedTest,
+    type Stats,
+    UnauthorizedError
+} from "./api";
+import {chartColors, ChartView} from "./ChartView";
+import {fmtDate, fmtDiff, fmtNum, fmtP, fmtPct, fmtSeconds, fmtT} from "./format";
 
 const percentAxis = {
   min: 0, max: 100,
