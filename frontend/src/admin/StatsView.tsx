@@ -47,7 +47,7 @@ function HypothesisCard({ h, minParticipants }: { h: Hypothesis; minParticipants
     <article className="panel hypothesis">
       <div className="hypothesis-head">
         <span className="hypothesis-id">{h.id}</span>
-        <VerdictBadge verdict={h.verdict} />
+        {/*<VerdictBadge verdict={h.verdict} />*/}
       </div>
       <h3>{h.title}</h3>
       <div className="versus">
